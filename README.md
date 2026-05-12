@@ -231,6 +231,67 @@ curl http://localhost:18789/health
 
 Now when you talk to the AI, it can execute tasks through OpenClaw.
 
+### 4. Use OpenClaw from cellular / off-LAN (Tailscale)
+
+By default the iOS app reaches the gateway via your Mac's Bonjour `.local` hostname, which only resolves on the same Wi-Fi network as your Mac. To use OpenClaw from cellular (5G/LTE), a different Wi-Fi network, or anywhere off-LAN, route through Tailscale:
+
+1. **Install [Tailscale](https://tailscale.com/download)** on both your Mac and your iPhone, sign in to the same tailnet on both, and confirm both devices appear in the Tailscale admin console.
+
+2. **Find your Mac's Tailscale IP:**
+
+   ```bash
+   /Applications/Tailscale.app/Contents/MacOS/Tailscale ip -4
+   ```
+
+   It will look like `100.x.x.x` (the [CGNAT range](https://tailscale.com/kb/1015/100.x-addresses) Tailscale uses).
+
+3. **Set the Remote URL in the app:** open VisionClaw → tap the gear icon → **Settings** → fill in **Remote URL (Tailscale / Public)** with `http://100.x.x.x:18789` → **Save**. The gateway resolver tries this first and falls back to the LAN host on home Wi-Fi, so the same install works in both contexts.
+
+4. **iOS App Transport Security exception (required):** iOS's built-in `NSAllowsLocalNetworking` exception covers `.local`, `192.168.x.x`, `10.x.x.x`, and `172.16-31.x.x` — but **not** Tailscale's `100.64.0.0/10` CGNAT range. Without an additional exception, plain HTTP to `100.x.x.x` is silently blocked by ATS, the OpenClaw indicator shows **off**, and tool calls fail with *"No reachable gateway"* — even though Safari can load the gateway URL fine (Safari does not enforce ATS; your app does).
+
+   Edit `samples/CameraAccess/CameraAccess/Info.plist` so the ATS dict reads:
+
+   ```xml
+   <key>NSAppTransportSecurity</key>
+   <dict>
+       <key>NSAllowsArbitraryLoads</key>
+       <true/>
+       <key>NSAllowsLocalNetworking</key>
+       <true/>
+   </dict>
+   ```
+
+   Rebuild and reinstall.
+
+5. **Verify reachability without launching the app** (sanity check): turn Wi-Fi off on the iPhone, confirm 5G in the status bar, and visit `http://100.x.x.x:18789/health` in Safari. A response of `{"ok":true,"status":"live"}` proves Tailscale routing is working — at that point any remaining issue is in the app (most commonly the ATS exception above).
+
+---
+
+## Known Issues
+
+### OpenClaw WebSocket handshake fails: `client.id must be equal to constant`
+
+The proactive-notification WebSocket (the live event stream from OpenClaw to the app) is rejected by the gateway with:
+
+```
+[OpenClawWS] Connect failed: invalid connect params:
+  at /client/id: must be equal to constant;
+  at /client/id: must match a schema in anyOf
+```
+
+This is a schema mismatch between the iOS app's `connect` handshake (`client.id = "ios-node"` in `OpenClawEventClient.swift`) and a tightened OpenClaw gateway schema. **Tool calls (HTTP) are unaffected** — only proactive notifications are broken. The app will retry forever in the background, which is harmless but spams the logs.
+
+### "An internal error occurred. Please try again." on Start Streaming
+
+Comes from Meta's DAT SDK (`StreamSessionViewModel.swift:formatStreamingError`), surfaced when the SDK's internal connection to the glasses fails for a non-specific reason. **Not** related to OpenClaw, Gemini, or the network setup.
+
+Common fixes:
+
+- Restart the glasses (press and hold the power button until they reboot)
+- Force-quit both **VisionClaw** and the **Meta AI** app, then reopen Meta AI first to confirm Developer Mode is on and the glasses are connected, then reopen VisionClaw
+- Toggle Bluetooth off/on
+- Take the glasses out of the charging case (low-power mode blocks streaming)
+
 ---
 
 ## Architecture
