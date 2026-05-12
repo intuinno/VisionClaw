@@ -22,8 +22,11 @@ class OpenClawBridge: ObservableObject {
   private let session: URLSession
   private let pingSession: URLSession
   private var sessionKey: String
-  private var conversationHistory: [[String: String]] = []
+  private var conversationHistory: [[String: Any]] = []
   private let maxHistoryTurns = 10
+  /// JPEG data captured by the camera button, sent as a multimodal attachment
+  /// on the next delegateTask() call and then cleared.
+  private var pendingImageData: Data?
 
   /// Cached resolved base URL — set once during checkConnection(), reused by delegateTask()
   private var resolvedBaseURL: String?
@@ -103,7 +106,15 @@ class OpenClawBridge: ObservableObject {
 
   func resetSession() {
     conversationHistory = []
+    pendingImageData = nil
     NSLog("[OpenClaw] Session reset (key retained: %@)", sessionKey)
+  }
+
+  /// Stash a JPEG to be sent with the next delegateTask() call.
+  /// Cleared after one use, or on resetSession().
+  func attachImage(_ data: Data) {
+    pendingImageData = data
+    NSLog("[OpenClaw] Image attached for next tool call (%d bytes)", data.count)
   }
 
   // MARK: - Agent Chat
@@ -121,7 +132,21 @@ class OpenClawBridge: ObservableObject {
       return .failure("Gateway not connected. Check Settings → OpenClaw.")
     }
 
-    conversationHistory.append(["role": "user", "content": task])
+    if let imageData = pendingImageData {
+      // OpenAI multimodal format: content is an array of parts.
+      let imagePart: [String: Any] = [
+        "type": "image_url",
+        "image_url": [
+          "url": "data:image/jpeg;base64,\(imageData.base64EncodedString())"
+        ]
+      ]
+      let textPart: [String: Any] = ["type": "text", "text": task]
+      conversationHistory.append(["role": "user", "content": [textPart, imagePart]])
+      pendingImageData = nil
+      NSLog("[OpenClaw] Sending task with attached image (%d bytes)", imageData.count)
+    } else {
+      conversationHistory.append(["role": "user", "content": task])
+    }
 
     if conversationHistory.count > maxHistoryTurns * 2 {
       conversationHistory = Array(conversationHistory.suffix(maxHistoryTurns * 2))

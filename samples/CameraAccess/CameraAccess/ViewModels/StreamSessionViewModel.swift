@@ -235,6 +235,9 @@ class StreamSessionViewModel: ObservableObject {
         if let uiImage = UIImage(data: photoData.data) {
           self.capturedPhoto = uiImage
           self.showPhotoPreview = true
+          // Queue the JPEG so the next OpenClaw tool call (e.g. "save this to
+          // notes", "what is this") includes it as a multimodal attachment.
+          self.geminiSessionVM?.attachPhotoForOpenClaw(photoData.data)
         }
       }
     }

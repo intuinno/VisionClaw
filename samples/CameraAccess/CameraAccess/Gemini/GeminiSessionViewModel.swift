@@ -203,4 +203,9 @@ class GeminiSessionViewModel: ObservableObject {
     geminiService.sendVideoFrame(image: image)
   }
 
+  /// Stash a JPEG to be sent with the next OpenClaw tool call.
+  func attachPhotoForOpenClaw(_ data: Data) {
+    openClawBridge.attachImage(data)
+  }
+
 }
