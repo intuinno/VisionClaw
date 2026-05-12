@@ -43,9 +43,12 @@ class StreamSessionViewModel: ObservableObject {
   @Published var hasActiveDevice: Bool = false
   @Published var streamingMode: StreamingMode = .glasses
   @Published var selectedResolution: StreamingResolution = .low
+  /// User toggled "audio only" mid-session: DAT SDK video is stopped, but the
+  /// session UI remains active so AI/Stop controls stay visible.
+  @Published var isAudioOnlyMode: Bool = false
 
   var isStreaming: Bool {
-    streamingStatus != .stopped
+    streamingStatus != .stopped || isAudioOnlyMode
   }
 
   var resolutionLabel: String {
@@ -268,9 +271,29 @@ class StreamSessionViewModel: ObservableObject {
   func stopSession() async {
     if streamingMode == .iPhone {
       stopIPhoneSession()
+      isAudioOnlyMode = false
       return
     }
-    await streamSession.stop()
+    if !isAudioOnlyMode {
+      await streamSession.stop()
+    }
+    isAudioOnlyMode = false
+  }
+
+  /// Toggle DAT SDK video on/off without leaving the streaming session.
+  /// Audio (mic + speaker via Bluetooth) is unaffected — it goes through
+  /// AVAudioSession, not DAT SDK.
+  func toggleAudioOnly() async {
+    if isAudioOnlyMode {
+      isAudioOnlyMode = false
+      await streamSession.start()
+      NSLog("[Stream] Audio-only OFF — DAT video resumed")
+    } else {
+      await streamSession.stop()
+      isAudioOnlyMode = true
+      currentVideoFrame = nil
+      NSLog("[Stream] Audio-only ON — DAT video stopped (audio still works)")
+    }
   }
 
   // MARK: - iPhone Camera Mode

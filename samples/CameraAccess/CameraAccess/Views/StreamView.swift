@@ -172,6 +172,19 @@ struct ControlsView: View {
         }
       }
 
+      // Audio-only toggle (glasses mode only -- saves glasses + phone battery
+      // by stopping the DAT SDK video pull. Audio over Bluetooth is independent.)
+      if viewModel.streamingMode == .glasses {
+        CircleButton(
+          icon: viewModel.isAudioOnlyMode ? "video.slash.fill" : "video.fill",
+          text: "Video"
+        ) {
+          Task {
+            await viewModel.toggleAudioOnly()
+          }
+        }
+      }
+
       // Gemini AI button (disabled when WebRTC is active — audio conflict)
       CircleButton(
         icon: geminiVM.isGeminiActive ? "waveform.circle.fill" : "waveform.circle",
