@@ -102,8 +102,9 @@ First, enable Developer Mode in the Meta AI app:
 ![How to enable Developer Mode](assets/dev_mode.png)
 
 Then in VisionClaw:
-1. Tap **"Start Streaming"** in the app
-2. Tap the **AI button** for voice + vision conversation
+1. Tap **"Start Streaming"** in the app — this fork starts in **audio-only mode** (DAT SDK video is skipped to save glasses + phone battery) and auto-starts a Gemini Live session, so you can talk immediately
+2. Tap the **Video** button in the controls row at any time to enable the live camera feed; tap again to go back to audio-only
+3. Tap the **camera button** to capture a still photo — the JPEG is shown in the preview sheet *and* attached to the next OpenClaw tool call automatically (great for "save this to my notes" / "what is this?")
 
 ---
 
@@ -231,39 +232,32 @@ curl http://localhost:18789/health
 
 Now when you talk to the AI, it can execute tasks through OpenClaw.
 
-### 4. Use OpenClaw from cellular / off-LAN (Tailscale)
+### 4. Use OpenClaw from cellular / off-LAN (Tailscale Serve + HTTPS)
 
-By default the iOS app reaches the gateway via your Mac's Bonjour `.local` hostname, which only resolves on the same Wi-Fi network as your Mac. To use OpenClaw from cellular (5G/LTE), a different Wi-Fi network, or anywhere off-LAN, route through Tailscale:
+By default the iOS app reaches the gateway via your Mac's Bonjour `.local` hostname, which only resolves on the same Wi-Fi network as your Mac. To use OpenClaw from cellular (5G/LTE), a different Wi-Fi network, or anywhere off-LAN, route through **Tailscale Serve** — it gives you a free auto-HTTPS endpoint with a valid Let's Encrypt cert, so iOS App Transport Security is happy without any plist hacks.
 
-1. **Install [Tailscale](https://tailscale.com/download)** on both your Mac and your iPhone, sign in to the same tailnet on both, and confirm both devices appear in the Tailscale admin console.
+1. **Install [Tailscale](https://tailscale.com/download)** on both your Mac and your iPhone, sign in to the same tailnet on both, and confirm both devices appear in `tailscale status`.
 
-2. **Find your Mac's Tailscale IP:**
+2. **Expose the gateway over HTTPS** on the Mac:
 
    ```bash
-   /Applications/Tailscale.app/Contents/MacOS/Tailscale ip -4
+   /Applications/Tailscale.app/Contents/MacOS/Tailscale serve --bg 18789
    ```
 
-   It will look like `100.x.x.x` (the [CGNAT range](https://tailscale.com/kb/1015/100.x-addresses) Tailscale uses).
+   Tailscale provisions a Let's Encrypt cert and prints your tailnet URL — something like:
 
-3. **Set the Remote URL in the app:** open VisionClaw → tap the gear icon → **Settings** → fill in **Remote URL (Tailscale / Public)** with `http://100.x.x.x:18789` → **Save**. The gateway resolver tries this first and falls back to the LAN host on home Wi-Fi, so the same install works in both contexts.
-
-4. **iOS App Transport Security exception (required):** iOS's built-in `NSAllowsLocalNetworking` exception covers `.local`, `192.168.x.x`, `10.x.x.x`, and `172.16-31.x.x` — but **not** Tailscale's `100.64.0.0/10` CGNAT range. Without an additional exception, plain HTTP to `100.x.x.x` is silently blocked by ATS, the OpenClaw indicator shows **off**, and tool calls fail with *"No reachable gateway"* — even though Safari can load the gateway URL fine (Safari does not enforce ATS; your app does).
-
-   Edit `samples/CameraAccess/CameraAccess/Info.plist` so the ATS dict reads:
-
-   ```xml
-   <key>NSAppTransportSecurity</key>
-   <dict>
-       <key>NSAllowsArbitraryLoads</key>
-       <true/>
-       <key>NSAllowsLocalNetworking</key>
-       <true/>
-   </dict>
+   ```
+   https://<your-mac>.<tailnet>.ts.net/
+   |-- proxy http://127.0.0.1:18789
    ```
 
-   Rebuild and reinstall.
+   The serve config persists across reboots. To inspect later: `tailscale serve status`. To remove: `tailscale serve --https=443 off`.
 
-5. **Verify reachability without launching the app** (sanity check): turn Wi-Fi off on the iPhone, confirm 5G in the status bar, and visit `http://100.x.x.x:18789/health` in Safari. A response of `{"ok":true,"status":"live"}` proves Tailscale routing is working — at that point any remaining issue is in the app (most commonly the ATS exception above).
+3. **Set the Remote URL in the app:** open VisionClaw → tap the gear icon → **Settings** → fill in **Remote URL (Tailscale / Public)** with the HTTPS URL from the previous step (no port number — Tailscale Serve uses 443) → **Save**. The gateway resolver tries this first and falls back to the LAN `.local` host when you're back on home Wi-Fi.
+
+4. **Verify reachability without launching the app** (sanity check): turn Wi-Fi off on the iPhone, confirm cellular in the status bar, and visit the URL in Safari. A response of `{"ok":true,"status":"live"}` proves Tailscale routing is working.
+
+> **Why not plain HTTP to the Tailscale IP?** It looks tempting but breaks: iOS App Transport Security blocks plain HTTP to `100.x.x.x` (CGNAT) addresses because they aren't covered by `NSAllowsLocalNetworking`. You can work around it with `NSAllowsArbitraryLoads`, but Tailscale Serve is the cleaner solution — proper HTTPS with a real cert, no plist exceptions needed, and no per-app local-network permission prompts.
 
 ---
 
@@ -349,12 +343,16 @@ All source code is in `samples/CameraAccessAndroid/app/src/main/java/.../cameraa
 Gemini Live supports function calling. Both apps declare a single `execute` tool that routes everything through OpenClaw:
 
 1. User says "Add eggs to my shopping list"
-2. Gemini speaks "Sure, adding that now" (verbal acknowledgment before tool call)
+2. Gemini speaks a brief acknowledgment (verbal confirmation before tool call)
 3. Gemini sends `toolCall` with `execute(task: "Add eggs to the shopping list")`
 4. `ToolCallRouter` sends HTTP POST to OpenClaw gateway
 5. OpenClaw executes the task using its 56+ connected skills
 6. Result returns to Gemini via `toolResponse`
-7. Gemini speaks the confirmation
+7. Gemini speaks the result
+
+**Verbatim pass-through (this fork):** the default system prompt in `GeminiConfig.defaultSystemInstruction` configures Gemini as a transparent voice relay rather than an agent — it must immediately call `execute` for every utterance and read OpenClaw's response **word-for-word**, with no paraphrasing, summary, or commentary. The acknowledgment in step 2 is one short polite Korean phrase ("네, 확인할게요.", "잠시만요.", etc.); the response in step 7 is read in Korean (translating from the source language if needed). To customize, edit the prompt in `GeminiConfig.swift` or override at runtime via the in-app **Settings → System Prompt** field.
+
+**Photo attachments:** tapping the camera button in glasses mode auto-attaches the captured JPEG to the next `execute` call as an OpenAI-compatible `image_url` part. OpenClaw skills can then act on the photo (e.g. "save this to my notes", "what is this object?", OCR, etc.). The pending image is cleared after one use.
 
 ### WebRTC Live Streaming
 

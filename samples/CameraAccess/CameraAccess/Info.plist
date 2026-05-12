@@ -44,19 +44,14 @@
 		<key>TeamID</key>
 		<string>$(DEVELOPMENT_TEAM)</string>
 	</dict>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsArbitraryLoads</key>
-		<true/>
-		<key>NSAllowsLocalNetworking</key>
-		<true/>
-	</dict>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Needed to connect to Meta AI Glasses</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>To listen to audio from Meta AI Glasses</string>
 	<key>NSCameraUsageDescription</key>
 	<string>This app uses the camera for iPhone testing mode, allowing you to test the AI assistant pipeline without glasses.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Used to reach the OpenClaw gateway running on your Mac (over Tailscale or your local Wi-Fi).</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>This app uses the microphone to have voice conversations with the AI assistant while streaming from your glasses.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

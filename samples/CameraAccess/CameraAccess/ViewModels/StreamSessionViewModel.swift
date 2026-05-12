@@ -263,7 +263,16 @@ class StreamSessionViewModel: ObservableObject {
   }
 
   func startSession() async {
-    await streamSession.start()
+    // Audio-only by default — skip DAT SDK video to save glasses + phone battery.
+    // The user can tap the Video toggle in the controls row to enable video later.
+    isAudioOnlyMode = true
+    currentVideoFrame = nil
+
+    // Auto-start Gemini so the user can immediately talk without an extra tap.
+    if let geminiVM = geminiSessionVM, !geminiVM.isGeminiActive {
+      await geminiVM.startSession()
+    }
+    NSLog("[Stream] Started in audio-only mode + Gemini auto-started")
   }
 
   private func showError(_ message: String) {

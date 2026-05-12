@@ -67,7 +67,11 @@ class OpenClawBridge: ObservableObject {
     let local = "\(GeminiConfig.openClawHost):\(GeminiConfig.openClawPort)"
     candidates.append((local, .local))
 
+    NSLog("[OpenClaw] checkConnection trying %d candidate(s): %@",
+          candidates.count, candidates.map { "\($0.1 == .remote ? "REMOTE" : "LOCAL")=\($0.0)" }.joined(separator: ", "))
+
     for (baseURL, mode) in candidates {
+      NSLog("[OpenClaw] Probing %@ (%@)…", baseURL, mode == .remote ? "REMOTE" : "LOCAL")
       let result = await probeGateway(baseURL)
       switch result {
       case .reachable:
@@ -78,17 +82,19 @@ class OpenClawBridge: ObservableObject {
         return
       case .authFailed(let msg):
         // Auth issues apply to all candidates — stop trying
+        NSLog("[OpenClaw] Probe %@ FAILED auth: %@", baseURL, msg)
         resolvedBaseURL = nil
         gatewayMode = .none
         connectionState = .unreachable(msg)
         return
       case .endpointDisabled:
+        NSLog("[OpenClaw] Probe %@ FAILED — chatCompletions endpoint disabled", baseURL)
         resolvedBaseURL = nil
         gatewayMode = .none
         connectionState = .unreachable("chatCompletions endpoint disabled — enable it in openclaw.json")
         return
       case .unreachable:
-        // Try next candidate
+        NSLog("[OpenClaw] Probe %@ UNREACHABLE — trying next candidate", baseURL)
         continue
       }
     }
@@ -227,10 +233,14 @@ class OpenClawBridge: ObservableObject {
     healthReq.httpMethod = "GET"
     do {
       let (_, resp) = try await pingSession.data(for: healthReq)
-      if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-        return .unreachable
+      if let http = resp as? HTTPURLResponse {
+        if !(200...299).contains(http.statusCode) {
+          NSLog("[OpenClaw] Probe step 1 (/health) → HTTP %d, treating as unreachable", http.statusCode)
+          return .unreachable
+        }
       }
     } catch {
+      NSLog("[OpenClaw] Probe step 1 (/health) FAILED: %@", error.localizedDescription)
       return .unreachable
     }
 
@@ -243,6 +253,7 @@ class OpenClawBridge: ObservableObject {
     do {
       let (_, resp) = try await pingSession.data(for: chatReq)
       if let http = resp as? HTTPURLResponse {
+        NSLog("[OpenClaw] Probe step 2 (/v1/chat/completions) → HTTP %d", http.statusCode)
         switch http.statusCode {
         case 200...299, 405:
           return .reachable
@@ -255,6 +266,7 @@ class OpenClawBridge: ObservableObject {
         }
       }
     } catch {
+      NSLog("[OpenClaw] Probe step 2 (/v1/chat/completions) FAILED: %@", error.localizedDescription)
       return .unreachable
     }
     return .unreachable
