@@ -232,6 +232,8 @@ curl http://localhost:18789/health
 
 Now when you talk to the AI, it can execute tasks through OpenClaw.
 
+> **Onboarding wizard caveat:** `openclaw onboard` does **not** add `gateway.http.endpoints.chatCompletions.enabled = true` to `~/.openclaw/openclaw.json` on its own. Without that key, the gateway responds **200 to GET** `/v1/chat/completions` (so the app's probe says "Connected") but **404 to POST** (so every tool call fails). After running the wizard, open `~/.openclaw/openclaw.json` and add the `chatCompletions` block manually, then restart the gateway. The app's diagnostic UI will say *"chatCompletions endpoint disabled — enable it in openclaw.json"* when this happens.
+
 ### 4. Use OpenClaw from cellular / off-LAN (Tailscale Serve + HTTPS)
 
 By default the iOS app reaches the gateway via your Mac's Bonjour `.local` hostname, which only resolves on the same Wi-Fi network as your Mac. To use OpenClaw from cellular (5G/LTE), a different Wi-Fi network, or anywhere off-LAN, route through **Tailscale Serve** — it gives you a free auto-HTTPS endpoint with a valid Let's Encrypt cert, so iOS App Transport Security is happy without any plist hacks.
@@ -258,6 +260,82 @@ By default the iOS app reaches the gateway via your Mac's Bonjour `.local` hostn
 4. **Verify reachability without launching the app** (sanity check): turn Wi-Fi off on the iPhone, confirm cellular in the status bar, and visit the URL in Safari. A response of `{"ok":true,"status":"live"}` proves Tailscale routing is working.
 
 > **Why not plain HTTP to the Tailscale IP?** It looks tempting but breaks: iOS App Transport Security blocks plain HTTP to `100.x.x.x` (CGNAT) addresses because they aren't covered by `NSAllowsLocalNetworking`. You can work around it with `NSAllowsArbitraryLoads`, but Tailscale Serve is the cleaner solution — proper HTTPS with a real cert, no plist exceptions needed, and no per-app local-network permission prompts.
+
+### 5. (Optional) Run OpenClaw on a remote VPS instead of your Mac
+
+If you want OpenClaw available even when your Mac is asleep or off your network, host the gateway on a small always-on cloud VM. Tailscale Serve still provides the HTTPS endpoint exactly the same way — the only difference is the gateway runs on a Linux droplet instead of macOS. Tested on a DigitalOcean **$6/mo 1GB Ubuntu 24.04** droplet.
+
+1. **Provision a droplet** (or comparable Linux VPS):
+
+   ```bash
+   doctl compute droplet create openclaw \
+     --image ubuntu-24-04-x64 --size s-1vcpu-1gb --region <near-you> \
+     --ssh-keys <your-do-ssh-key-id> --wait
+   ```
+
+2. **Add ~4 GB of swap** before installing anything. With only 1 GB RAM the Claude Code installer's native build is OOM-killed by the kernel; swap fixes it.
+
+   ```bash
+   sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile \
+     && sudo mkswap /swapfile && sudo swapon /swapfile \
+     && echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+   ```
+
+3. **Create an unprivileged user** for OpenClaw. This matters specifically because OpenClaw runs Chrome for browser automation — and Chrome refuses to run its sandbox as root. Running as a normal user keeps the sandbox enabled.
+
+   ```bash
+   sudo adduser --disabled-password --gecos "" openclaw
+   echo 'openclaw ALL=(ALL) NOPASSWD: ALL' | sudo tee /etc/sudoers.d/openclaw
+   sudo chmod 0440 /etc/sudoers.d/openclaw
+   sudo cp /root/.ssh/authorized_keys /home/openclaw/.ssh/authorized_keys
+   sudo chown -R openclaw:openclaw /home/openclaw/.ssh
+   ```
+
+   The rest of this section assumes you SSH in as `openclaw@<droplet-ip>`.
+
+4. **Install Node (via nvm), Google Chrome, Claude Code, and OpenClaw:**
+
+   ```bash
+   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+   source ~/.bashrc
+   nvm install --lts
+
+   curl -sS https://dl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg
+   echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+   sudo apt update && sudo apt install -y google-chrome-stable
+
+   curl -fsSL https://claude.ai/install.sh | bash
+   claude                          # complete the OAuth flow on your laptop
+   npm install -g openclaw
+   openclaw onboard                # interactive — needs a real TTY (just `ssh` in, not `ssh host '...'`)
+   ```
+
+5. **Manually enable the chatCompletions endpoint** (the wizard does not — see the callout in step 3 above). Add the `endpoints.chatCompletions.enabled` key to `~/.openclaw/openclaw.json` and restart:
+
+   ```bash
+   python3 -c "
+   import json, pathlib
+   p = pathlib.Path.home() / '.openclaw' / 'openclaw.json'
+   d = json.loads(p.read_text())
+   d.setdefault('gateway',{}).setdefault('http',{}).setdefault('endpoints',{})['chatCompletions'] = {'enabled': True}
+   p.write_text(json.dumps(d, indent=2))
+   "
+   openclaw gateway restart
+   curl -s http://127.0.0.1:18789/health    # should print {"ok":true,"status":"live"}
+   ```
+
+6. **Install Tailscale and expose the gateway over HTTPS:**
+
+   ```bash
+   curl -fsSL https://tailscale.com/install.sh | sh
+   sudo tailscale up                  # open the printed URL on your laptop to authenticate
+   sudo tailscale serve --bg 18789
+   tailscale serve status             # prints the public https://<droplet>.<tailnet>.ts.net URL
+   ```
+
+7. **Set the iOS app's Remote URL** to that HTTPS URL and copy the gateway token from `~/.openclaw/openclaw.json` (`gateway.auth.token`) into the app's **Gateway Token** field. Save in the in-app Settings, then force-quit and reopen the app — `OpenClawBridge` caches the resolved URL per session and won't pick up the change otherwise.
+
+> **Run the gateway under systemd** for auto-restart on reboot (recommended): create `/etc/systemd/system/openclaw.service` with `User=openclaw`, `ExecStart=/home/openclaw/.nvm/versions/node/<ver>/bin/openclaw gateway start --foreground`, `Restart=always`, then `sudo systemctl enable --now openclaw`.
 
 ---
 
