@@ -324,6 +324,8 @@ If you want OpenClaw available even when your Mac is asleep or off your network,
    curl -s http://127.0.0.1:18789/health    # should print {"ok":true,"status":"live"}
    ```
 
+   > **A note on `bind`:** the wizard typically writes `"bind": "loopback"` for a server install — **keep that**. Unlike the Mac path (which uses `"bind": "lan"` so your phone can hit the gateway directly over Wi-Fi), the VPS never exposes port 18789 to the public internet. Tailscale Serve proxies from `127.0.0.1:18789` to your HTTPS URL, so the gateway only needs to listen on loopback. This keeps the gateway unreachable except via the Tailscale tunnel — strictly more secure than `"lan"` would be on a public-IP VPS.
+
 6. **Install Tailscale and expose the gateway over HTTPS:**
 
    ```bash
